@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import re
+import io
 
 # --- Page Config ---
 # --- Page Config ---
@@ -228,16 +229,19 @@ with st.sidebar:
     st.markdown("---")
     
     # Data Source Selection
-    source_type = st.radio("資料來源 (Data Source)", ["Excel Upload", "Google Sheets URL"])
+    source_type = st.radio("資料來源 (Data Source)", ["Excel Upload", "Google Sheets URL", "Paste Data (直接貼上)"])
     
     uploaded_file = None
     sheet_url = None
+    paste_buffer = None
     
     if source_type == "Excel Upload":
         uploaded_file = st.file_uploader("📂 Upload Data (.xlsx)", type=["xlsx", "xls"])
-    else:
+    elif source_type == "Google Sheets URL":
         sheet_url = st.text_input("🔗 Google Sheets Link", help="請確保連結權限已開啟為 '知道連結者皆可檢視' (Anyone with the link can view)")
         st.caption("Auto-converts /edit to /export")
+    elif source_type == "Paste Data (直接貼上)":
+        paste_buffer = st.text_area("📋 貼上 Excel 資料 (Tab 分隔)", height=200, help="請從 Excel 或 Google Sheet 複製表格內容 (含標題列) 並在此貼上。")
 
     st.info("支援模糊欄位匹配：\n- dt, title\n- 曝光, 訪問, 點擊, 轉化")
 
@@ -247,23 +251,21 @@ st.title("Bitget Wallet Analytics")
 df = None
 
 # 1. Load Data Logic
-if uploaded_file is not None:
+if source_type == "Excel Upload" and uploaded_file is not None:
     try:
         df = pd.read_excel(uploaded_file)
     except Exception as e:
         st.error(f"❌ 無法讀取 Excel: {e}")
         
-elif sheet_url:
+elif source_type == "Google Sheets URL" and sheet_url:
     try:
         # Regex to extract Spreadsheet ID
-        # Matches patterns like /d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
         match_id = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
         
         if match_id:
             spreadsheet_id = match_id.group(1)
             
             # Regex to extract GID (Sheet ID)
-            # Matches gid=0, gid=123456
             match_gid = re.search(r"[#&]gid=([0-9]+)", sheet_url)
             
             # Construct Export URL
@@ -273,17 +275,28 @@ elif sheet_url:
                 gid = match_gid.group(1)
                 export_url = f"{base_url}&gid={gid}"
             else:
-                # If no GID is specified, let Google default to the first sheet
                 export_url = base_url
             
-            # st.info(f"正在讀取 Google Sheet (ID: {spreadsheet_id})...")
             df = pd.read_csv(export_url)
             
         else:
              st.error("❌ 無法辨識 Google Sheet 連結格式。請確認連結包含 '/d/' 與 ID。")
              
     except Exception as e:
-        st.error(f"❌ 無法讀取 Google Sheet。請確認：\n1. 連結權限已開啟為 '知道連結者皆可檢視' (Anyone with the link can view)\n2. 該分頁 (Sheet) 確實存在\n錯誤訊息: {e}")
+        st.error(f"❌ 無法讀取 Google Sheet: {e}")
+
+elif source_type == "Paste Data (直接貼上)" and paste_buffer:
+    try:
+        # Try Tab separator first (Excel default)
+        df = pd.read_csv(io.StringIO(paste_buffer), sep='\t')
+        
+        # If only 1 column detected, maybe it's Comma separated?
+        if len(df.columns) <= 1:
+             st.warning("⚠️ 檢測到欄位過少，嘗試使用逗號分隔...")
+             df = pd.read_csv(io.StringIO(paste_buffer), sep=',')
+             
+    except Exception as e:
+        st.error(f"❌ 無法解析貼上的資料: {e}")
 
 if df is not None:
     try:
@@ -764,3 +777,4 @@ else:
         <p style='color: #94a3b8; font-size: 1.2rem;'>Advanced Analytics for Bitget Wallet Content</p>
     </div>
     """, unsafe_allow_html=True)
+
